@@ -6,9 +6,8 @@ on:
       - main
   workflow_dispatch:
 
-# optional but recommended: prevent concurrent deploy runs
 concurrency:
-  group: deploy-${{ github.ref }}-${{ secrets.LAMBDA_FUNCTION_NAME }}
+  group: deploy-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -60,7 +59,6 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           POLL_INTERVAL_SECRET: ${{ secrets.POLL_INTERVAL }}
         run: |
-          # default poll interval if secret is empty
           POLL_INTERVAL="${POLL_INTERVAL_SECRET:-300}"
 
           aws lambda update-function-configuration \

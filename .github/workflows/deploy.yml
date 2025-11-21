@@ -6,6 +6,11 @@ on:
       - main
   workflow_dispatch:
 
+# optional but recommended: prevent concurrent deploy runs
+concurrency:
+  group: deploy-${{ github.ref }}-${{ secrets.LAMBDA_FUNCTION_NAME }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,6 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          mkdir -p package
           pip install -r requirements.txt -t package/
           cp *.py package/
           cp -r connectors package/
@@ -38,23 +44,36 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
       
-      - name: Deploy to Lambda
+      - name: Update Lambda code
         run: |
           aws lambda update-function-code \
-            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --function-name "${{ secrets.LAMBDA_FUNCTION_NAME }}" \
             --zip-file fileb://deployment-package.zip
-      
-      - name: Update Lambda environment variables
+
+      - name: Wait for code update to complete
         run: |
+          aws lambda wait function-updated \
+            --function-name "${{ secrets.LAMBDA_FUNCTION_NAME }}"
+
+      - name: Update Lambda environment variables
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          POLL_INTERVAL_SECRET: ${{ secrets.POLL_INTERVAL }}
+        run: |
+          # default poll interval if secret is empty
+          POLL_INTERVAL="${POLL_INTERVAL_SECRET:-300}"
+
           aws lambda update-function-configuration \
-            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
-            --environment Variables="{
-              DATABASE_URL=${{ secrets.DATABASE_URL }},
-              POLL_INTERVAL=${{ secrets.POLL_INTERVAL || '300' }}
-            }"
-      
+            --function-name "${{ secrets.LAMBDA_FUNCTION_NAME }}" \
+            --environment "Variables={DATABASE_URL=$DATABASE_URL,POLL_INTERVAL=$POLL_INTERVAL}"
+
+      - name: Wait for config update to complete
+        run: |
+          aws lambda wait function-updated \
+            --function-name "${{ secrets.LAMBDA_FUNCTION_NAME }}"
+
       - name: Publish Lambda version
         run: |
           aws lambda publish-version \
-            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --function-name "${{ secrets.LAMBDA_FUNCTION_NAME }}" \
             --description "Deployed from GitHub Actions - ${{ github.sha }}"
